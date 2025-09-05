@@ -18,6 +18,39 @@ import { Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/auth";
 import { authApi } from "@/lib/auth-client";
 
+function isValidEmail(v: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+// Map backend / network errors to friendly messages
+function mapErrorMessage(err: unknown): string {
+  const anyErr = err as any;
+  const raw =
+    anyErr?.message ||
+    anyErr?.data?.message ||
+    anyErr?.data?.error ||
+    anyErr?.error ||
+    "";
+
+  const msg = String(raw).toLowerCase();
+
+  // Common server-side codes
+  if (msg.includes("email_taken")) return "This email is already in use.";
+  if (msg.includes("invalid_email")) return "Please enter a valid email address.";
+  if (msg.includes("weak_password")) return "Password is too weak. Use at least 8 characters.";
+  if (msg.includes("password_too_short")) return "Password must be at least 8 characters.";
+  if (msg.includes("rate_limit") || msg.includes("too many")) return "Too many attempts. Please try again later.";
+
+  // Network / platform
+  if (msg.includes("timeout")) return "Request timed out. Please try again.";
+  if (msg.includes("failed to fetch")) return "Network error. Please check your internet connection.";
+  if (msg.includes("cors")) return "Sign up blocked by CORS/auth settings. Check FRONTEND_URL and cookies.";
+
+  // Fallbacks
+  if (!raw) return "Sign up failed. Please try again.";
+  return String(raw);
+}
+
 export default function SignUp() {
   const navigate = useNavigate();
   const { signUp, loading } = useAuthStore();
@@ -27,12 +60,36 @@ export default function SignUp() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (loading) return; // prevent double submit
     setErr(null);
+
+    const name = form.name.trim();
+    const email = form.email.trim();
+    const password = form.password;
+
+    // Lightweight validation (keep UI as-is)
+    if (!name || !email || !password) {
+      setErr("Please fill in all fields.");
+      return;
+    }
+    if (name.length < 2) {
+      setErr("Please enter your full name.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setErr("Please enter a valid email address.");
+      return;
+    }
+    if (password.length < 8) {
+      setErr("Password must be at least 8 characters.");
+      return;
+    }
+
     try {
-      await signUp(form.name.trim(), form.email.trim(), form.password);
-      navigate("/");
+      await signUp(name, email, password); // store handles API + cookie
+      navigate("/"); // go home after successful sign up
     } catch (e: any) {
-      setErr(e?.message || "Sign up failed");
+      setErr(mapErrorMessage(e));
     }
   }
 
@@ -50,7 +107,7 @@ export default function SignUp() {
         </CardHeader>
 
         <CardContent className="space-y-4">
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4" noValidate>
             {/* Name */}
             <div className="space-y-2 text-left">
               <Label htmlFor="name">Name</Label>
@@ -63,6 +120,7 @@ export default function SignUp() {
                 value={form.name}
                 onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
                 required
+                aria-invalid={!!err && form.name.trim().length < 2}
               />
             </div>
 
@@ -78,6 +136,7 @@ export default function SignUp() {
                 value={form.email}
                 onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))}
                 required
+                aria-invalid={!!err && !isValidEmail(form.email.trim())}
               />
             </div>
 
@@ -95,6 +154,7 @@ export default function SignUp() {
                   onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))}
                   minLength={8}
                   required
+                  aria-invalid={!!err && form.password.length < 8}
                 />
                 <Button
                   type="button"
@@ -103,6 +163,7 @@ export default function SignUp() {
                   onClick={() => setShowPassword((v) => !v)}
                   className="absolute inset-y-0 right-0 pr-3 text-muted-foreground"
                   aria-label={showPassword ? "Hide password" : "Show password"}
+                  tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
@@ -116,7 +177,11 @@ export default function SignUp() {
             )}
 
             {/* Submit */}
-            <Button type="submit" className="w-full bg-primary hover:opacity-95 text-white" disabled={loading}>
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:opacity-95 text-white"
+              disabled={loading}
+            >
               {loading ? "Creating..." : "Sign Up"}
             </Button>
           </form>
@@ -134,8 +199,9 @@ export default function SignUp() {
             variant="outline"
             className="w-full h-10"
             onClick={() => {
-              window.location.href = authApi.googleStartUrl();
+              window.location.assign(authApi.googleStartUrl());
             }}
+            disabled={loading}
           >
             <svg
               className="mr-2 h-5 w-5"

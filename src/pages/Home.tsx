@@ -311,8 +311,15 @@ function HomeHeaderActions() {
           variant="destructive"
           disabled={loading}
           onClick={async () => {
-            await signOut();
-            navigate("/");
+            // Logic-only change: ensure redirect even if the API call fails (e.g., CORS)
+            try {
+              await signOut(); // should clear store + call POST /auth/signout
+            } catch {
+              // ignore errors; we still want to move user to auth
+            } finally {
+              // Use replace to avoid going back to an authed page via back button
+              navigate("/signin", { replace: true });
+            }
           }}
         >
           Log out

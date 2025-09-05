@@ -16,6 +16,40 @@ import { Label } from "@/components/ui/label";
 import { useAuthStore } from "@/stores/auth";
 import { authApi } from "@/lib/auth-client";
 
+function isValidEmail(v: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+// Turn backend / network errors into friendly messages
+function mapErrorMessage(err: unknown): string {
+  // common shapes: Error(message), { status, message, data }, fetch text
+  const anyErr = err as any;
+  const raw =
+    anyErr?.message ||
+    anyErr?.data?.message ||
+    anyErr?.data?.error ||
+    anyErr?.error ||
+    "";
+
+  const msg = String(raw).toLowerCase();
+
+  // Backend codes
+  if (msg.includes("invalid_credentials")) return "Email or password is incorrect.";
+  if (msg.includes("password_not_set")) return "Password not set for this account. Try Google sign-in or reset password.";
+  if (msg.includes("missing_token")) return "Session expired. Please sign in again.";
+  if (msg.includes("account_disabled")) return "Your account is disabled. Please contact support.";
+  if (msg.includes("email_not_verified")) return "Please verify your email before signing in.";
+
+  // Network / platform
+  if (msg.includes("timeout")) return "Request timed out. Please try again.";
+  if (msg.includes("failed to fetch")) return "Network error. Please check your internet connection.";
+  if (msg.includes("cors")) return "Sign-in blocked by CORS/auth settings. Check FRONTEND_URL and cookies.";
+
+  // Fallbacks
+  if (!raw) return "Sign in failed. Please try again.";
+  return String(raw);
+}
+
 export default function SignIn() {
   const navigate = useNavigate();
   const { signIn, loading } = useAuthStore();
@@ -24,12 +58,31 @@ export default function SignIn() {
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (loading) return; // prevent double submit
     setErr(null);
+
+    const email = form.email.trim();
+    const password = form.password;
+
+    // Lightweight front-end validation (no UI changes)
+    if (!email || !password) {
+      setErr("Please enter your email and password.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setErr("Please enter a valid email address.");
+      return;
+    }
+    if (password.length < 8) {
+      setErr("Password must be at least 8 characters.");
+      return;
+    }
+
     try {
-      await signIn(form.email.trim(), form.password);
+      await signIn(email, password); // uses store -> calls API -> sets cookie/session
       navigate("/"); // back home after login
     } catch (e: any) {
-      setErr(e?.message || "Sign in failed");
+      setErr(mapErrorMessage(e));
     }
   }
 
@@ -44,7 +97,7 @@ export default function SignIn() {
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4" noValidate>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -56,6 +109,7 @@ export default function SignIn() {
                   setForm((s) => ({ ...s, email: e.target.value }))
                 }
                 autoComplete="email"
+                aria-invalid={!!err && !isValidEmail(form.email)}
               />
             </div>
 
@@ -71,6 +125,7 @@ export default function SignIn() {
                   setForm((s) => ({ ...s, password: e.target.value }))
                 }
                 autoComplete="current-password"
+                aria-invalid={!!err && form.password.length < 8}
               />
             </div>
 
@@ -97,8 +152,9 @@ export default function SignIn() {
             variant="outline"
             className="w-full"
             onClick={() => {
-              window.location.href = authApi.googleStartUrl();
+              window.location.assign(authApi.googleStartUrl());
             }}
+            disabled={loading}
           >
             Continue with Google
           </Button>
