@@ -19,19 +19,15 @@ export type AuthUser = {
   avatarUrl?: string;
 };
 
-// ---- BASE URL (prod must be set) -------------------------------------------
-const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? undefined;
-// In dev, allow a local proxy fallback to "/api"
-const rawBase =
-  envBase ?? (import.meta.env.DEV ? "/api" : undefined);
-
-if (!rawBase) {
-  // Fail fast in production if not configured
-  throw new Error("VITE_API_BASE_URL is not set");
-}
+// ---- BASE URL (robust: env first, then same-origin /api, then /api) ---------
+const envBase = (import.meta.env?.VITE_API_BASE_URL as string | undefined) ?? undefined;
+const inferred =
+  typeof window !== "undefined" && window.location?.origin
+    ? `${window.location.origin}/api`
+    : (import.meta.env?.DEV ? "/api" : undefined);
 
 // Ensure no trailing slash to avoid `//path`
-const BASE_URL = rawBase.replace(/\/+$/, "");
+const BASE_URL = (envBase ?? inferred ?? "/api").replace(/\/+$/, "");
 
 // ---------------------------------------------------------------------------
 const DEFAULT_TIMEOUT = 30_000;
@@ -50,10 +46,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Request timeout after ${timeoutMs}ms`)),
-        timeoutMs
-      )
+      setTimeout(() => reject(new Error(`Request timeout after ${timeoutMs}ms`)), timeoutMs)
     ),
   ]);
 }
@@ -67,7 +60,6 @@ async function withRetry<T>(
     return await fn();
   } catch (error) {
     if (attempts <= 1) throw error;
-    // simple backoff
     await new Promise((r) => setTimeout(r, delay));
     return withRetry(fn, attempts - 1, delay * 2);
   }
@@ -104,12 +96,10 @@ async function fetchApi<T>(
 
     if (!response.ok) {
       const errorData = await parseJsonSafely<any>(response).catch(() => ({}));
-      throw new ApiError(
-        response.status,
-        (errorData as any)?.message ||
-          `HTTP ${response.status}: ${response.statusText}`,
-        errorData
-      );
+      const msg =
+        (errorData && (errorData.message || errorData.error)) ||
+        `HTTP ${response.status}: ${response.statusText}`;
+      throw new ApiError(response.status, msg, errorData);
     }
 
     return parseJsonSafely<T>(response);
@@ -170,11 +160,9 @@ export const apiClient = {
     });
   },
 
-  async submitQuiz(
+  submitQuiz(
     attemptId: string,
-    payload?: {
-      answers?: Array<{ questionId: string; chosenOptionIds: string[] }>;
-    }
+    payload?: { answers?: Array<{ questionId: string; chosenOptionIds: string[] }> }
   ): Promise<SubmitQuizResp> {
     return withRetry(
       async () =>

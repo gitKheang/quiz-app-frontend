@@ -6,30 +6,37 @@ export type AuthUser = {
   role?: "USER" | "ADMIN";
 };
 
-// --- Base URL: prod must be set via VITE_API_BASE_URL ---
-const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? undefined;
-const rawBase = envBase ?? (import.meta.env.DEV ? "/api" : undefined);
-if (!rawBase) {
-  throw new Error("VITE_API_BASE_URL is not set");
-}
-const BASE_URL = rawBase.replace(/\/+$/, ""); // remove trailing slash
+// Base URL: prefer env, otherwise infer same-origin /api (works in prod & dev)
+const envBase = (import.meta.env?.VITE_API_BASE_URL as string | undefined) ?? undefined;
+const inferred =
+  typeof window !== "undefined" && window.location?.origin
+    ? `${window.location.origin}/api`
+    : (import.meta.env?.DEV ? "/api" : undefined);
+const rawBase = (envBase ?? inferred ?? "/api").replace(/\/+$/, "");
+const BASE_URL = rawBase;
 
 async function ffetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
-    credentials: "include",
+    credentials: "include", // send/receive auth cookies
     headers: { "Content-Type": "application/json", ...(init.headers || {}) },
     ...init,
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `HTTP ${res.status}`);
+    // Try to extract error message if server returned JSON
+    const ct = res.headers.get("content-type") || "";
+    const msg = ct.includes("application/json")
+      ? (await res.json().catch(() => null))?.message
+      : await res.text().catch(() => "");
+    throw new Error(msg || `HTTP ${res.status}`);
   }
 
-  return (res.headers.get("content-type") || "").includes("application/json")
-    ? ((await res.json()) as T)
-    : (null as any as T);
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    return null as any as T;
+  }
+  return (await res.json()) as T;
 }
 
 export const authApi = {
