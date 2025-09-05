@@ -1,3 +1,4 @@
+// src/lib/api-client.ts
 import type {
   CategoryDTO,
   QuestionDTO,
@@ -18,7 +19,21 @@ export type AuthUser = {
   avatarUrl?: string;
 };
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) || "/api";
+// ---- BASE URL (prod must be set) -------------------------------------------
+const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? undefined;
+// In dev, allow a local proxy fallback to "/api"
+const rawBase =
+  envBase ?? (import.meta.env.DEV ? "/api" : undefined);
+
+if (!rawBase) {
+  // Fail fast in production if not configured
+  throw new Error("VITE_API_BASE_URL is not set");
+}
+
+// Ensure no trailing slash to avoid `//path`
+const BASE_URL = rawBase.replace(/\/+$/, "");
+
+// ---------------------------------------------------------------------------
 const DEFAULT_TIMEOUT = 30_000;
 const LONG_TIMEOUT = 300_000;
 const RETRY_ATTEMPTS = 3;
@@ -52,11 +67,7 @@ async function withRetry<T>(
     return await fn();
   } catch (error) {
     if (attempts <= 1) throw error;
-    console.log(
-      `[api] request failed, retrying in ${delay}ms. Attempts left: ${
-        attempts - 1
-      }`
-    );
+    // simple backoff
     await new Promise((r) => setTimeout(r, delay));
     return withRetry(fn, attempts - 1, delay * 2);
   }
@@ -66,7 +77,7 @@ async function parseJsonSafely<T>(resp: Response): Promise<T> {
   if (resp.status === 204) return null as unknown as T;
   const ct = resp.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
-    const _ = await resp.text().catch(() => "");
+    await resp.text().catch(() => ""); // drain body
     return {} as T;
   }
   return (await resp.json()) as T;
@@ -81,7 +92,7 @@ async function fetchApi<T>(
 
   return withRetry(async () => {
     const fetchPromise = fetch(url, {
-      credentials: "include",
+      credentials: "include", // required for auth cookie
       headers: {
         "Content-Type": "application/json",
         ...(options?.headers || {}),
@@ -165,7 +176,6 @@ export const apiClient = {
       answers?: Array<{ questionId: string; chosenOptionIds: string[] }>;
     }
   ): Promise<SubmitQuizResp> {
-    console.log(`[api] submitting quiz for attempt: ${attemptId}`);
     return withRetry(
       async () =>
         fetchApi<SubmitQuizResp>(
